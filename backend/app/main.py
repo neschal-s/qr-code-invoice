@@ -33,9 +33,14 @@ async def upload_invoice(file: UploadFile = File(...)):
 
     extracted_text = extract_text_from_pdf(str(file_path))
     parsed_data = parse_invoice_fields(extracted_text)
-
+    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
+    debug_lines = [
+    line for line in lines
+    if "Invoice" in line or "Dated" in line
+]
     return {
-        "message": "Invoice processed successfully",
-        "file_id": file_id,
-        "parsed_data": parsed_data
-    }
+    "message": "Invoice processed successfully",
+    "file_id": file_id,
+    "parsed_data": parsed_data,
+    "debug_lines": debug_lines
+}
