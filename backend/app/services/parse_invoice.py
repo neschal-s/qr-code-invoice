@@ -1,15 +1,59 @@
 import re
+def extract_po_number(text: str) -> str:
+    """
+    Extracts PO Number from lines like:
+    'Buyer’s Order No. 4500123456 Dated'
+    """
+    for line in text.splitlines():
+        if "Order No" in line or "PO No" in line:
+            parts = line.split()
+            for part in parts:
+                if part.isdigit() and len(part) >= 8:
+                    return part
+    return ""
 
 
 def parse_invoice_fields(text: str) -> dict:
     data = {
-        "seller_gstin": None,
-        "buyer_gstin": None,
-        "invoice_no": None,
-        "invoice_date": None,
-        "total_value": None,
-        "hsn": None
-    }
+    # --- HEADER ---
+    "seller_gstin": None,
+    "buyer_gstin": None,
+    "invoice_no": None,
+    "invoice_date": None,
+    "po_number": None,
+
+    # --- ITEM IDENTIFIERS ---
+    "po_item_no": "10",                  # fixed
+    "invoice_part_number": None,          # from description
+    "vendor_internal_code": "W60120",     # fixed
+
+    # --- QUANTITY & PRICES ---
+    "quantity": None,
+    "basic_rate": None,
+    "net_rate": None,                     # ✅ ADD THIS
+    "taxable_value": None,
+
+    # --- TAX RATES ---
+    "cgst_rate": None,
+    "sgst_rate": None,
+    "igst_rate": "0.00",
+
+    # --- TAX AMOUNTS ---
+    "cgst_value": None,
+    "sgst_value": None,
+    "igst_value": "0.00",
+    "cess": "0.00",
+    "ugst": "0.00",
+
+    # --- CLASSIFICATION ---
+    "hsn": None,
+
+    # --- TOTALS ---
+    "total_value": None
+}
+
+
+
 
     # ---------- GSTIN ----------
     gstins = re.findall(
@@ -51,5 +95,7 @@ def parse_invoice_fields(text: str) -> dict:
     hsn_match = re.search(r"\b(\d{8})\b", text)
     if hsn_match:
         data["hsn"] = hsn_match.group(1)
+
+    data["po_number"] = extract_po_number(text)
 
     return data
