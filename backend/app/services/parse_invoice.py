@@ -1,16 +1,33 @@
 import re
 def extract_po_number(text: str) -> str:
-    """
-    Extracts PO Number from lines like:
-    'Buyer’s Order No. 4500123456 Dated'
-    """
-    for line in text.splitlines():
-        if "Order No" in line or "PO No" in line:
-            parts = line.split()
-            for part in parts:
-                if part.isdigit() and len(part) >= 8:
-                    return part
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    for i, line in enumerate(lines):
+        # Anchor line
+        if "Buyer" in line and "Order" in line and "No" in line:
+            # Look ahead up to 5 lines
+            for j in range(i + 1, min(i + 6, len(lines))):
+                candidate = lines[j]
+
+                # Skip known noise
+                if candidate.startswith("Contact"):
+                    continue
+                if "Dispatch" in candidate:
+                    continue
+                if "Dated" in candidate and not any(ch.isdigit() for ch in candidate):
+                    continue
+
+                # Case: "5430017659 26-Dec-25"
+                parts = candidate.split()
+                if parts and parts[0].isdigit() and 8 <= len(parts[0]) <= 12:
+                    return parts[0]
+
     return ""
+
+
+
+
+
 
 
 def parse_invoice_fields(text: str) -> dict:
@@ -97,5 +114,96 @@ def parse_invoice_fields(text: str) -> dict:
         data["hsn"] = hsn_match.group(1)
 
     data["po_number"] = extract_po_number(text)
+    print("✅ EXTRACTED PO NUMBER:", data["po_number"])
+
+
+    item_data = extract_item_row(text)
+    
+    data["invoice_part_number"] = item_data["invoice_part_number"]
+    data["quantity"] = item_data["quantity"]
+    data["basic_rate"] = item_data["basic_rate"]
+    data["net_rate"] = item_data["net_rate"]
+    data["taxable_value"] = item_data["taxable_value"]
+
+
+    # ---------- GST CALCULATION ----------
+    try:
+        taxable = float(data["taxable_value"].replace(",", ""))
+
+        if data["seller_gstin"] and data["buyer_gstin"]:
+            seller_state = data["seller_gstin"][:2]
+            buyer_state = data["buyer_gstin"][:2]
+
+            # ✅ Intra-state → CGST + SGST
+            if seller_state == buyer_state:
+                data["cgst_rate"] = "9.00"
+                data["sgst_rate"] = "9.00"
+
+                cgst_val = taxable * 0.09
+                sgst_val = taxable * 0.09
+
+                data["cgst_value"] = f"{cgst_val:.2f}"
+                data["sgst_value"] = f"{sgst_val:.2f}"
+
+                data["igst_rate"] = "0.00"
+                data["igst_value"] = "0.00"
+
+            # ✅ Inter-state → IGST
+            else:
+                data["igst_rate"] = "18.00"
+                igst_val = taxable * 0.18
+                data["igst_value"] = f"{igst_val:.2f}"
+
+                data["cgst_rate"] = "0.00"
+                data["sgst_rate"] = "0.00"
+                data["cgst_value"] = "0.00"
+                data["sgst_value"] = "0.00"
+    except:
+        pass
+
 
     return data
+
+def extract_item_row(text: str) -> dict:
+    result = {
+        "invoice_part_number": None,
+        "quantity": None,
+        "basic_rate": None,
+        "net_rate": None,
+        "taxable_value": None
+    }
+
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    for i, line in enumerate(lines):
+
+        # Part number (8851BQ000028, 87210150119, etc.)
+        part_match = re.search(r"\b[A-Z0-9]{8,}\b", line)
+        if not part_match:
+            continue
+
+        result["invoice_part_number"] = part_match.group(0)
+
+        block = " ".join(lines[i:i+4])
+
+        # ✅ Quantity + unit (EA / KG / NOS / BOX)
+        qty_match = re.search(
+            r"\b(\d+(?:\.\d+)?)\s*(EA|KG|NOS|BOX)\b",
+            block,
+            re.IGNORECASE
+        )
+
+        if qty_match:
+            result["quantity"] = qty_match.group(1)
+
+        # Prices
+        amounts = re.findall(r"[\d,]+\.\d{2}", block)
+        if len(amounts) >= 2:
+            result["basic_rate"] = amounts[-2]
+            result["net_rate"] = amounts[-2]
+            result["taxable_value"] = amounts[-1]
+
+        break  # one item only
+
+    return result
+
