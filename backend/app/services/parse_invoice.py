@@ -109,9 +109,7 @@ def parse_invoice_fields(text: str) -> dict:
         data["total_value"] = total_match.group(1)
 
     # ---------- HSN ----------
-    hsn_match = re.search(r"\b\d{4,8}\b", line)
-    if hsn_match:
-        result["hsn"] = hsn_match.group(0)
+    
 
     data["po_number"] = extract_po_number(text)
     print("✅ EXTRACTED PO NUMBER:", data["po_number"])
