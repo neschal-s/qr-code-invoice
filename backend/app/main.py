@@ -1,4 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from app.services.embed_qr_pdf import embed_qr_into_pdf
+
+
 from pathlib import Path
 import uuid
 
@@ -14,6 +19,21 @@ app = FastAPI(
     description="Upload Tally invoice PDF and get QR embedded PDF",
     version="1.0.0"
 )
+
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",   # Vite dev server
+        "http://127.0.0.1:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/files", StaticFiles(directory="temp"), name="files")
 
 # temp folder for uploads
 TEMP_DIR = Path("temp")
@@ -33,35 +53,36 @@ async def upload_invoice(file: UploadFile = File(...)):
     file_id = str(uuid.uuid4())
     file_path = TEMP_DIR / f"{file_id}.pdf"
 
-    # save uploaded PDF
+    # 1️⃣ Save uploaded PDF
     with open(file_path, "wb") as f:
         f.write(await file.read())
 
-    # extract + parse
+    # 2️⃣ Extract + parse
     extracted_text = extract_text_from_pdf(str(file_path))
     parsed_data = parse_invoice_fields(extracted_text)
 
-    # debug helper lines
-    lines = [line.strip() for line in extracted_text.splitlines() if line.strip()]
-    debug_lines = [
-        line for line in lines
-        if "Invoice" in line or "Dated" in line
-    ]
-
-    # build QR payload
+    # 3️⃣ Build QR payload
     qr_payload = build_qr_payload(parsed_data)
 
-
-
-    # generate QR
+    # 4️⃣ Generate QR image
     qr_path = TEMP_DIR / f"{file_id}_qr.png"
     generate_qr_code(qr_payload, str(qr_path))
 
+    # 🔥 5️⃣ EMBED QR INTO PDF (THIS WAS MISSING)
+    final_pdf = TEMP_DIR / f"{file_id}_final.pdf"
+
+    embed_qr_into_pdf(
+        input_pdf=str(file_path),
+        qr_image=str(qr_path),
+        output_pdf=str(final_pdf)
+    )
+
+    # 6️⃣ Return URLs
     return {
         "message": "Invoice processed and QR generated",
         "file_id": file_id,
         "parsed_data": parsed_data,
         "qr_payload": qr_payload,
-        "qr_file": qr_path.name,
-        "debug_lines": debug_lines
+        "qr_url": f"http://127.0.0.1:8000/files/{qr_path.name}",
+        "pdf_url": f"http://127.0.0.1:8000/files/{final_pdf.name}",
     }
