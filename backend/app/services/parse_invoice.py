@@ -109,9 +109,9 @@ def parse_invoice_fields(text: str) -> dict:
         data["total_value"] = total_match.group(1)
 
     # ---------- HSN ----------
-    hsn_match = re.search(r"\b(\d{8})\b", text)
+    hsn_match = re.search(r"\b\d{4,8}\b", line)
     if hsn_match:
-        data["hsn"] = hsn_match.group(1)
+        result["hsn"] = hsn_match.group(0)
 
     data["po_number"] = extract_po_number(text)
     print("✅ EXTRACTED PO NUMBER:", data["po_number"])
@@ -124,6 +124,7 @@ def parse_invoice_fields(text: str) -> dict:
     data["basic_rate"] = item_data["basic_rate"]
     data["net_rate"] = item_data["net_rate"]
     data["taxable_value"] = item_data["taxable_value"]
+    data["hsn"] = item_data["hsn"]
 
 
     # ---------- GST CALCULATION ----------
@@ -170,40 +171,51 @@ def extract_item_row(text: str) -> dict:
         "quantity": None,
         "basic_rate": None,
         "net_rate": None,
-        "taxable_value": None
+        "taxable_value": None,
+        "hsn": None
     }
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    for i, line in enumerate(lines):
+    for idx, line in enumerate(lines):
+        # Anchor: must contain HSN and Amount
+        hsn_match = re.search(r"\b\d{4,8}\b", line)
+        amount_match = re.search(r"[\d,]+\.\d{2}$", line)
 
-        # Part number (8851BQ000028, 87210150119, etc.)
-        part_match = re.search(r"\b[A-Z0-9]{8,}\b", line)
-        if not part_match:
+        if not hsn_match or not amount_match:
             continue
 
-        result["invoice_part_number"] = part_match.group(0)
+        # 🔹 Work ONLY on the right side of HSN
+        rhs = line[hsn_match.end():]
 
-        block = " ".join(lines[i:i+4])
-
-        # ✅ Quantity + unit (EA / KG / NOS / BOX)
+        # ✅ Quantity (number + unit)
         qty_match = re.search(
-            r"\b(\d+(?:\.\d+)?)\s*(EA|KG|NOS|BOX)\b",
-            block,
+            r"(\d+(?:\.\d+)?)\s*(KG|EA|NOS|PCS|BOX)",
+            rhs,
             re.IGNORECASE
         )
-
         if qty_match:
             result["quantity"] = qty_match.group(1)
 
-        # Prices
-        amounts = re.findall(r"[\d,]+\.\d{2}", block)
-        if len(amounts) >= 2:
-            result["basic_rate"] = amounts[-2]
-            result["net_rate"] = amounts[-2]
-            result["taxable_value"] = amounts[-1]
+        # ✅ Rate (number before unit, AFTER quantity)
+        rate_match = re.search(
+            r"(KG|EA|NOS|PCS|BOX)\s+(\d+(?:\.\d{2})?)",
+            rhs,
+            re.IGNORECASE
+        )
+        if rate_match:
+            result["basic_rate"] = rate_match.group(2)
+            result["net_rate"] = rate_match.group(2)
 
-        break  # one item only
+        # ✅ Amount (rightmost)
+        result["taxable_value"] = amount_match.group(0)
+
+        # ✅ Part number usually in next line
+        if idx + 1 < len(lines):
+            part_match = re.search(r"\b[A-Z0-9]{8,}\b", lines[idx + 1])
+            if part_match:
+                result["invoice_part_number"] = part_match.group(0)
+
+        break  # single item invoice
 
     return result
-
