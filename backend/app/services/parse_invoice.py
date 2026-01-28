@@ -115,14 +115,14 @@ def parse_invoice_fields(text: str) -> dict:
     print("✅ EXTRACTED PO NUMBER:", data["po_number"])
 
 
-    item_data = extract_item_row(text)
+    item_data = extract_quantity_and_rate(text)
     
     data["invoice_part_number"] = item_data["invoice_part_number"]
     data["quantity"] = item_data["quantity"]
     data["basic_rate"] = item_data["basic_rate"]
     data["net_rate"] = item_data["net_rate"]
     data["taxable_value"] = item_data["taxable_value"]
-    data["hsn"] = item_data["hsn"]
+    data["hsn"] = extract_hsn_from_summary(text)
 
 
     # ---------- GST CALCULATION ----------
@@ -163,57 +163,75 @@ def parse_invoice_fields(text: str) -> dict:
 
     return data
 
-def extract_item_row(text: str) -> dict:
+def extract_hsn_from_summary(text: str) -> str:
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    summary_started = False
+
+    for line in lines:
+        if "HSN/SAC" in line and "Taxable" in line:
+            summary_started = True
+            continue
+
+        if summary_started:
+            match = re.match(r"^(\d{4,8})\s+[\d,]+\.\d{2}", line)
+            if match:
+                return match.group(1)
+
+    return None
+
+
+
+def extract_quantity_and_rate(text: str) -> dict:
     result = {
-        "invoice_part_number": None,
         "quantity": None,
         "basic_rate": None,
         "net_rate": None,
         "taxable_value": None,
-        "hsn": None
+        "invoice_part_number": None
     }
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
+    UNITS = {"EA", "KG", "NOS", "PCS", "BOX"}
 
-    for idx, line in enumerate(lines):
-        # Anchor: must contain HSN and Amount
-        hsn_match = re.search(r"\b\d{4,8}\b", line)
-        amount_match = re.search(r"[\d,]+\.\d{2}$", line)
+    for i, line in enumerate(lines):
+        tokens = line.split()
 
-        if not hsn_match or not amount_match:
+        unit_positions = [idx for idx, t in enumerate(tokens) if t.upper() in UNITS]
+        if len(unit_positions) < 2:
             continue
 
-        # 🔹 Work ONLY on the right side of HSN
-        rhs = line[hsn_match.end():]
+        try:
+            first_unit = unit_positions[0]
+            second_unit = unit_positions[1]
 
-        # ✅ Quantity (number + unit)
-        qty_match = re.search(
-            r"(\d+(?:\.\d+)?)\s*(KG|EA|NOS|PCS|BOX)",
-            rhs,
-            re.IGNORECASE
-        )
-        if qty_match:
-            result["quantity"] = qty_match.group(1)
+            # Quantity = number before first unit
+            qty = tokens[first_unit - 1]
 
-        # ✅ Rate (number before unit, AFTER quantity)
-        rate_match = re.search(
-            r"(KG|EA|NOS|PCS|BOX)\s+(\d+(?:\.\d{2})?)",
-            rhs,
-            re.IGNORECASE
-        )
-        if rate_match:
-            result["basic_rate"] = rate_match.group(2)
-            result["net_rate"] = rate_match.group(2)
+            # Rate = number after first unit
+            rate = tokens[first_unit + 1]
 
-        # ✅ Amount (rightmost)
-        result["taxable_value"] = amount_match.group(0)
+            # Amount = number after second unit
+            amount = tokens[second_unit + 1]
 
-        # ✅ Part number usually in next line
-        if idx + 1 < len(lines):
-            part_match = re.search(r"\b[A-Z0-9]{8,}\b", lines[idx + 1])
-            if part_match:
-                result["invoice_part_number"] = part_match.group(0)
+            # Validate numeric sanity
+            if not re.match(r"\d+(?:\.\d+)?", qty):
+                continue
 
-        break  # single item invoice
+            result["quantity"] = qty
+            result["basic_rate"] = rate
+            result["net_rate"] = rate
+            result["taxable_value"] = amount
+
+            # Part number usually next line
+            if i + 1 < len(lines):
+                part_match = re.search(r"\b[A-Z0-9]{8,}\b", lines[i + 1])
+                if part_match:
+                    result["invoice_part_number"] = part_match.group(0)
+
+            break
+
+        except IndexError:
+            continue
 
     return result
